@@ -1,63 +1,72 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from datetime import datetime, timedelta
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error
-import numpy as np
+import matplotlib.pyplot as plt
+from statsmodels.tsa.seasonal import seasonal_decompose
+from pmdarima import auto_arima
+from sklearn.model_selection import train_test_split
 
-# Function to download data from yfinance
-def download_data(ticker):
-    end_date = datetime.today()
-    start_date = end_date - timedelta(days=3*365)
-    data = yf.download(ticker, start=start_date, end=end_date)
-    return data
+# Streamlit app title
+st.set_page_config(layout="wide")
+st.markdown(
+    "<h1 style='text-align: center;'>Stock Price Forecaster by <a href='https://github.com/scma-632'>SCMA 632</a></h1>",
+    unsafe_allow_html=True
+)
+st.markdown(
+    """
+    <p align="center">
+      <a href="https://github.com/DenverCoder1/readme-typing-svg">
+        <img src="https://readme-typing-svg.herokuapp.com?font=Time+New+Roman&color=yellow&size=30&center=true&vCenter=true&width=600&height=100&lines=Stock+Forecasts+Made+Simple!;stock_analyser-1.0;" alt="Typing SVG">
+      </a>
+    </p>
+    """,
+    unsafe_allow_html=True
+)
 
-# Function to train the random forest model
-def train_model(data):
-    data = data[['Adj Close']]
-    data['Date'] = data.index
-    data['Date'] = data['Date'].map(datetime.toordinal)
-    X = data[['Date']]
-    y = data['Adj Close']
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(X, y)
-    return model
+# User inputs
+ticker = st.text_input('Enter stock ticker symbol', 'AAPL')
+start_date = st.date_input('Start date', value=pd.to_datetime('2020-01-01'))
+end_date = st.date_input('End date', value=pd.to_datetime('today'))
+forecast_horizon = st.number_input('Enter forecast horizon (days)', min_value=1, value=30)
 
-# Function to evaluate the model
-def evaluate_model(model, data):
-    data = data[['Adj Close']]
-    data['Date'] = data.index
-    data['Date'] = data['Date'].map(datetime.toordinal)
-    X = data[['Date']]
-    y = data['Adj Close']
-    predictions = model.predict(X)
-    mse = mean_squared_error(y, predictions)
-    return mse
+# Fetch stock data
+data = yf.download(ticker, start=start_date, end=end_date)
 
-# Function to predict future trend
-def predict_future(model, days=30):
-    future_dates = [datetime.today() + timedelta(days=i) for i in range(1, days+1)]
-    future_dates_ordinal = [date.toordinal() for date in future_dates]
-    future_predictions = model.predict(np.array(future_dates_ordinal).reshape(-1, 1))
-    future_data = pd.DataFrame({'Date': future_dates, 'Predicted Adj Close': future_predictions})
-    return future_data
+# Pre-process data
+data.reset_index(inplace=True)
+data['Date'] = pd.to_datetime(data['Date'])
+data.set_index('Date', inplace=True)
+ts_data = data['Adj Close']
 
-# Streamlit app
-st.title('Share Risk and Return Predictor')
+# Decompose time series
+decomposition = seasonal_decompose(ts_data, model='multiplicative', period=12)
+st.write('Seasonal decomposition:')
+st.pyplot(decomposition.plot())
 
-ticker = st.text_input('Enter the ticker of the share:', 'AAPL')
+# Train-test split
+monthly_data = ts_data.resample("M").mean()
+train, test = train_test_split(monthly_data, test_size=0.2, shuffle=False)
 
-if ticker:
-    data = download_data(ticker)
-    st.write(f"Downloaded data for {ticker}")
-    st.line_chart(data['Adj Close'])
+# Model fitting
+st.write('Fitting model...')
+model = auto_arima(train, seasonal=True,m=12, suppress_warnings=True)
 
-    model = train_model(data)
-    mse = evaluate_model(model, data)
-    st.write(f'Model Mean Squared Error: {mse}')
+# Generate forecast
+forecast, conf_int = model.predict(n_periods=forecast_horizon, return_conf_int=True)
 
-    future_data = predict_future(model)
-    st.write('Future Trend Prediction:')
-    st.line_chart(future_data.set_index('Date'))
-    st.write('Predicted data:', future_data)
+# Plot the original data, fitted values, and forecast
+plt.figure(figsize=(12, 6))
+plt.plot(train, label='Original Data')
+plt.plot(forecast.index, forecast, label='Forecast', color='green')
+plt.fill_between(forecast.index, 
+                 conf_int[:, 0], 
+                 conf_int[:, 1], 
+                 color='k', alpha=.15)
+plt.legend()
+plt.xlabel('Date')
+plt.ylabel('Value')
+plt.title('Auto ARIMA Forecasting')
+st.pyplot(plt)
+
+st.write('Forecasted values:')
+st.write(forecast)
